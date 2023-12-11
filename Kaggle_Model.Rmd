@@ -1,0 +1,512 @@
+---
+title: "Home Default Modeling - Hunter Harmer"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_depth: 2
+  pdf_document: default
+---
+
+## Introduction
+
+The purpose of this notebook is to explore the datasets that are available for the Home Credit Default risk Kaggle project. Ultimately, we are trying to classify whether or not an individual will repay a loan or not. One of the key components that generally enables an individual to receive a loan is credit history; however, not all consumers have a sufficient credit history to be eligible for loans, even if they would otherwise be considered worthy recipients. 
+
+Our task is to create a classification model that identifies whether a customer ought to be eligible for financing based on components that are not restricted to credit score, by evaluating all available criteria in the Kaggle dataset, using methods such as logistic regression, decision trees, random forest, etc. By creating such a model, Home Credit would benefit by expanding the pool of possible loan recipients, which grows business and diversifies risk, and adds an additional measure to evaluate customer expected value. There are some problems with the data - such as what to do with missing data, and identifying the best way to join the various datasets. 
+
+```{r setup, warning = FALSE, echo=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(caret)
+library(stats)
+
+#Train Data
+zip_file_train <- "application_train.csv.zip"
+unzip(zip_file_train, exdir = "extracted_files")
+data_train <- read.csv("extracted_files/application_train.csv")
+
+#Bureau Data
+zip_file_bureau <- "bureau.csv.zip"
+unzip(zip_file_bureau, exdir = "extracted_files")
+data_bureau <- read.csv("extracted_files/bureau.csv")
+
+#Bureau Balance Data
+zip_file_bb <- "bureau_balance.csv.zip"
+unzip(zip_file_bb, exdir = "extracted_files")
+data_bb <- read.csv("extracted_files/bureau_balance.csv")
+
+#Credit Card Balance Data
+zip_file_cc <- "credit_card_balance.csv.zip"
+unzip(zip_file_cc, exdir = "extracted_files")
+data_cc <- read.csv("extracted_files/credit_card_balance.csv")
+
+#Previous Application Data
+zip_file_previous <- "previous_application.csv.zip"
+unzip(zip_file_previous, exdir = "extracted_files")
+data_previous <- read.csv("extracted_files/previous_application.csv")
+
+#Installment Payments Data
+zip_file_installments <- "installments_payments.csv.zip"
+unzip(zip_file_installments, exdir = "extracted_files")
+data_installments <- read.csv("extracted_files/installments_payments.csv")
+
+#POS Cash Balance Data
+zip_file_cashbal <- "POS_CASH_balance.csv.zip"
+unzip(zip_file_cashbal, exdir = "extracted_files")
+data_cashbal <- read.csv("extracted_files/POS_CASH_balance.csv")
+
+```
+
+## Discription of Data
+
+We have 7 datasets that are available to use: the application training dataset (main data), bureau data, bureau balance data, credit card balance data, previous application data, installments payment data, and POS cash balance data.  
+
+The training dataset is the most valuable, because we see the results of whether or not an individual defaulted, using the TARGET variable. The dataset has a total of 122 variables, including income and financing information, family data, house and asset data, and many other possibly influential factors. The other datasets are much more limited, contain the data that you might imagine from their names, and all have ID's with which to join to the training set. 
+
+```{r data structure,ECHO=FALSE,warning=FALSE}
+# Data Structures:
+str(data_train)
+str(data_bb)
+str(data_bureau)
+str(data_cashbal)
+str(data_installments)
+str(data_previous)
+
+```
+
+## Discussion of missing data
+
+There is a lot of missing data, especially within the train set, which is what I will initially focus on. Some columns have no missing data. Others, such as ("AMT_ANNUITY", "ANT_FAM_MEMBERS", "DAYS_LAST_PHONE_CHANGE", and "EXT_SOURCE_2") have fewer than 1000 missing rows, while others still have tens or hundreds of thousands of rows of data missing. These will all need to be addressed; depending on the variable, we may simply remove the entire column, we may use mean/median values as a stand in, we may convert the variable to a factor, etc. Depending on the the description of the variable and the size of influence, we will decide on our approach. 
+
+The code chunk below shows the summary of all missing data from each data set:
+
+
+```{r missing data,ECHO=FALSE,WARNING=FALSE}
+
+# Calculate the count of columns with missing values in the train dataset
+missing_count_train <- colSums(is.na(data_train))
+columns_with_missing_train <- missing_count_train[missing_count_train > 0]
+print(columns_with_missing_train)
+
+# Previous application dataset missing data
+data_previous_missing <- summary(is.na(data_previous))
+print(data_previous_missing)
+
+# Installments Payments missing data
+data_installments_missing <- summary(is.na(data_installments))
+print(data_installments_missing)
+
+# Credit card balance missing data
+data_cc_missing <- summary(is.na(data_cc))
+print(data_cc_missing)
+
+# Cash balance missing data
+data_cashbal_missing <- summary(is.na(data_cashbal))
+print(data_cashbal_missing)
+
+# Bureau missing data
+data_bureau_missing <- summary(is.na(data_bureau))
+print(data_bureau_missing)
+
+# Bureau balance missing data
+data_bb_missing <- summary(is.na(data_bb))
+print(data_bb_missing)
+
+```
+
+## Data Preparation
+
+Within the dataset, we see there are a fair amount of missing data or data that needs transformation. The first step is converting certain varibles into features, the second is addressing what to do with NA values, and third would be crafting feature engineering (interactions, etc.)
+
+```{r visualizations,echo=FALSE,warning=FALSE}
+
+# After looking through the data, these seemed like the variables most likely to be factors
+
+data_train_factors <- data_train %>%
+  mutate(
+    NAME_CONTRACT_TYPE = factor(NAME_CONTRACT_TYPE),
+    CODE_GENDER = factor(CODE_GENDER),
+    FLAG_OWN_CAR = factor(FLAG_OWN_CAR),
+    FLAG_OWN_REALTY = factor(FLAG_OWN_REALTY),
+    NAME_TYPE_SUITE = factor(NAME_TYPE_SUITE),
+    NAME_INCOME_TYPE = factor(NAME_INCOME_TYPE),
+    NAME_EDUCATION_TYPE = factor(NAME_EDUCATION_TYPE),
+    NAME_FAMILY_STATUS = factor(NAME_FAMILY_STATUS),
+    NAME_HOUSING_TYPE = factor(NAME_HOUSING_TYPE),
+    FLAG_MOBIL = factor(FLAG_MOBIL),
+    FLAG_EMP_PHONE = factor(FLAG_EMP_PHONE),
+    FLAG_WORK_PHONE = factor(FLAG_WORK_PHONE),
+    FLAG_CONT_MOBILE = factor(FLAG_CONT_MOBILE),
+    FLAG_PHONE = factor(FLAG_PHONE),
+    FLAG_EMAIL = factor(FLAG_EMAIL),
+    OCCUPATION_TYPE = factor(OCCUPATION_TYPE),
+    CNT_FAM_MEMBERS = factor(CNT_FAM_MEMBERS),
+    REGION_RATING_CLIENT = factor(REGION_RATING_CLIENT),
+    WEEKDAY_APPR_PROCESS_START = factor(WEEKDAY_APPR_PROCESS_START),
+    REG_REGION_NOT_LIVE_REGION = factor(REG_REGION_NOT_LIVE_REGION),
+    REG_REGION_NOT_WORK_REGION = factor(REG_REGION_NOT_WORK_REGION),
+    LIVE_REGION_NOT_WORK_REGION = factor(LIVE_REGION_NOT_WORK_REGION),
+    REG_CITY_NOT_LIVE_CITY = factor(REG_CITY_NOT_LIVE_CITY),
+    REG_CITY_NOT_WORK_CITY = factor(REG_CITY_NOT_WORK_CITY),
+    LIVE_CITY_NOT_WORK_CITY = factor(LIVE_CITY_NOT_WORK_CITY),
+    ORGANIZATION_TYPE = factor(ORGANIZATION_TYPE)
+  )
+
+# Now to replace the variables that had less than 100,000 observations of NA's. Those with greater NA's appear to be NA on purpose. 
+
+data_train_factors <- data_train_factors %>%
+  mutate(
+    AMT_ANNUITY = ifelse(is.na(AMT_ANNUITY), median(AMT_ANNUITY, na.rm = TRUE), AMT_ANNUITY),
+    AMT_GOODS_PRICE = ifelse(is.na(AMT_GOODS_PRICE), median(AMT_GOODS_PRICE, na.rm = TRUE), AMT_GOODS_PRICE),
+    EXT_SOURCE_2 = ifelse(is.na(EXT_SOURCE_2), median(EXT_SOURCE_2, na.rm = TRUE), EXT_SOURCE_2),
+    OBS_30_CNT_SOCIAL_CIRCLE = ifelse(is.na(OBS_30_CNT_SOCIAL_CIRCLE), median(OBS_30_CNT_SOCIAL_CIRCLE, na.rm = TRUE), OBS_30_CNT_SOCIAL_CIRCLE),
+    DEF_30_CNT_SOCIAL_CIRCLE = ifelse(is.na(DEF_30_CNT_SOCIAL_CIRCLE), median(DEF_30_CNT_SOCIAL_CIRCLE, na.rm = TRUE), DEF_30_CNT_SOCIAL_CIRCLE),
+    OBS_60_CNT_SOCIAL_CIRCLE = ifelse(is.na(OBS_60_CNT_SOCIAL_CIRCLE), median(OBS_60_CNT_SOCIAL_CIRCLE, na.rm = TRUE), OBS_60_CNT_SOCIAL_CIRCLE),
+    DEF_60_CNT_SOCIAL_CIRCLE = ifelse(is.na(DEF_60_CNT_SOCIAL_CIRCLE), median(DEF_60_CNT_SOCIAL_CIRCLE, na.rm = TRUE), DEF_60_CNT_SOCIAL_CIRCLE),
+    CNT_FAM_MEMBERS = ifelse(is.na(CNT_FAM_MEMBERS), median(as.numeric(CNT_FAM_MEMBERS), na.rm = TRUE), CNT_FAM_MEMBERS),
+    AMT_REQ_CREDIT_BUREAU_HOUR = ifelse(is.na(AMT_REQ_CREDIT_BUREAU_HOUR), median(AMT_REQ_CREDIT_BUREAU_HOUR, na.rm = TRUE), AMT_REQ_CREDIT_BUREAU_HOUR),
+    AMT_REQ_CREDIT_BUREAU_DAY = ifelse(is.na(AMT_REQ_CREDIT_BUREAU_DAY), median(AMT_REQ_CREDIT_BUREAU_DAY, na.rm = TRUE), AMT_REQ_CREDIT_BUREAU_DAY),
+    AMT_REQ_CREDIT_BUREAU_WEEK = ifelse(is.na(AMT_REQ_CREDIT_BUREAU_WEEK), median(AMT_REQ_CREDIT_BUREAU_WEEK, na.rm = TRUE), AMT_REQ_CREDIT_BUREAU_WEEK),
+    AMT_REQ_CREDIT_BUREAU_MON = ifelse(is.na(AMT_REQ_CREDIT_BUREAU_MON), median(AMT_REQ_CREDIT_BUREAU_MON, na.rm = TRUE), AMT_REQ_CREDIT_BUREAU_MON),
+    AMT_REQ_CREDIT_BUREAU_QRT = ifelse(is.na(AMT_REQ_CREDIT_BUREAU_QRT), median(AMT_REQ_CREDIT_BUREAU_QRT, na.rm = TRUE), AMT_REQ_CREDIT_BUREAU_QRT),
+    AMT_REQ_CREDIT_BUREAU_YEAR = ifelse(is.na(AMT_REQ_CREDIT_BUREAU_YEAR), median(AMT_REQ_CREDIT_BUREAU_YEAR, na.rm = TRUE), AMT_REQ_CREDIT_BUREAU_YEAR),
+    DAYS_LAST_PHONE_CHANGE = ifelse(is.na(DAYS_LAST_PHONE_CHANGE), median(DAYS_LAST_PHONE_CHANGE, na.rm = TRUE), DAYS_LAST_PHONE_CHANGE)
+  )
+
+# For the variables with NA's greater than 100,000 NA's have been replaced with 0
+
+# Replace NA values with 0 for multiple variables
+data_train_factors$OWN_CAR_AGE <- ifelse(is.na(data_train_factors$OWN_CAR_AGE), 0, data_train_factors$OWN_CAR_AGE)
+data_train_factors$EXT_SOURCE_1 <- ifelse(is.na(data_train_factors$EXT_SOURCE_1), 0, data_train_factors$EXT_SOURCE_1)
+data_train_factors$EXT_SOURCE_3 <- ifelse(is.na(data_train_factors$EXT_SOURCE_3), 0, data_train_factors$EXT_SOURCE_3)
+data_train_factors$APARTMENTS_AVG <- ifelse(is.na(data_train_factors$APARTMENTS_AVG), 0, data_train_factors$APARTMENTS_AVG)
+data_train_factors$BASEMENTAREA_AVG <- ifelse(is.na(data_train_factors$BASEMENTAREA_AVG), 0, data_train_factors$BASEMENTAREA_AVG)
+data_train_factors$YEARS_BEGINEXPLUATATION_AVG <- ifelse(is.na(data_train_factors$YEARS_BEGINEXPLUATATION_AVG), 0, data_train_factors$YEARS_BEGINEXPLUATATION_AVG)
+data_train_factors$YEARS_BUILD_AVG <- ifelse(is.na(data_train_factors$YEARS_BUILD_AVG), 0, data_train_factors$YEARS_BUILD_AVG)
+data_train_factors$COMMONAREA_AVG <- ifelse(is.na(data_train_factors$COMMONAREA_AVG), 0, data_train_factors$COMMONAREA_AVG)
+data_train_factors$ELEVATORS_AVG <- ifelse(is.na(data_train_factors$ELEVATORS_AVG), 0, data_train_factors$ELEVATORS_AVG)
+data_train_factors$ENTRANCES_AVG <- ifelse(is.na(data_train_factors$ENTRANCES_AVG), 0, data_train_factors$ENTRANCES_AVG)
+data_train_factors$FLOORSMAX_AVG <- ifelse(is.na(data_train_factors$FLOORSMAX_AVG), 0, data_train_factors$FLOORSMAX_AVG)
+data_train_factors$FLOORSMIN_AVG <- ifelse(is.na(data_train_factors$FLOORSMIN_AVG), 0, data_train_factors$FLOORSMIN_AVG)
+data_train_factors$LANDAREA_AVG <- ifelse(is.na(data_train_factors$LANDAREA_AVG), 0, data_train_factors$LANDAREA_AVG)
+data_train_factors$LIVINGAPARTMENTS_AVG <- ifelse(is.na(data_train_factors$LIVINGAPARTMENTS_AVG), 0, data_train_factors$LIVINGAPARTMENTS_AVG)
+data_train_factors$LIVINGAREA_AVG <- ifelse(is.na(data_train_factors$LIVINGAREA_AVG), 0, data_train_factors$LIVINGAREA_AVG)
+data_train_factors$NONLIVINGAPARTMENTS_AVG <- ifelse(is.na(data_train_factors$NONLIVINGAPARTMENTS_AVG), 0, data_train_factors$NONLIVINGAPARTMENTS_AVG)
+data_train_factors$NONLIVINGAREA_AVG <- ifelse(is.na(data_train_factors$NONLIVINGAREA_AVG), 0, data_train_factors$NONLIVINGAREA_AVG)
+data_train_factors$APARTMENTS_MODE <- ifelse(is.na(data_train_factors$APARTMENTS_MODE), 0, data_train_factors$APARTMENTS_MODE)
+data_train_factors$BASEMENTAREA_MODE <- ifelse(is.na(data_train_factors$BASEMENTAREA_MODE), 0, data_train_factors$BASEMENTAREA_MODE)
+data_train_factors$YEARS_BEGINEXPLUATATION_MODE <- ifelse(is.na(data_train_factors$YEARS_BEGINEXPLUATATION_MODE), 0, data_train_factors$YEARS_BEGINEXPLUATATION_MODE)
+data_train_factors$YEARS_BUILD_MODE <- ifelse(is.na(data_train_factors$YEARS_BUILD_MODE), 0, data_train_factors$YEARS_BUILD_MODE)
+data_train_factors$COMMONAREA_MODE <- ifelse(is.na(data_train_factors$COMMONAREA_MODE), 0, data_train_factors$COMMONAREA_MODE)
+data_train_factors$ELEVATORS_MODE <- ifelse(is.na(data_train_factors$ELEVATORS_MODE), 0, data_train_factors$ELEVATORS_MODE)
+data_train_factors$ENTRANCES_MODE <- ifelse(is.na(data_train_factors$ENTRANCES_MODE), 0, data_train_factors$ENTRANCES_MODE)
+data_train_factors$FLOORSMAX_MODE <- ifelse(is.na(data_train_factors$FLOORSMAX_MODE), 0, data_train_factors$FLOORSMAX_MODE)
+data_train_factors$FLOORSMIN_MODE <- ifelse(is.na(data_train_factors$FLOORSMIN_MODE), 0, data_train_factors$FLOORSMIN_MODE)
+data_train_factors$LANDAREA_MODE <- ifelse(is.na(data_train_factors$LANDAREA_MODE), 0, data_train_factors$LANDAREA_MODE)
+data_train_factors$LIVINGAPARTMENTS_MODE <- ifelse(is.na(data_train_factors$LIVINGAPARTMENTS_MODE), 0, data_train_factors$LIVINGAPARTMENTS_MODE)
+data_train_factors$LIVINGAREA_MODE <- ifelse(is.na(data_train_factors$LIVINGAREA_MODE), 0, data_train_factors$LIVINGAREA_MODE)
+data_train_factors$NONLIVINGAPARTMENTS_MODE <- ifelse(is.na(data_train_factors$NONLIVINGAPARTMENTS_MODE), 0, data_train_factors$NONLIVINGAPARTMENTS_MODE)
+data_train_factors$NONLIVINGAREA_MODE <- ifelse(is.na(data_train_factors$NONLIVINGAREA_MODE), 0, data_train_factors$NONLIVINGAREA_MODE)
+data_train_factors$APARTMENTS_MEDI <- ifelse(is.na(data_train_factors$APARTMENTS_MEDI), 0, data_train_factors$APARTMENTS_MEDI)
+data_train_factors$BASEMENTAREA_MEDI <- ifelse(is.na(data_train_factors$BASEMENTAREA_MEDI), 0, data_train_factors$BASEMENTAREA_MEDI)
+data_train_factors$YEARS_BEGINEXPLUATATION_MEDI <- ifelse(is.na(data_train_factors$YEARS_BEGINEXPLUATATION_MEDI), 0, data_train_factors$YEARS_BEGINEXPLUATATION_MEDI)
+data_train_factors$YEARS_BUILD_MEDI <- ifelse(is.na(data_train_factors$YEARS_BUILD_MEDI), 0, data_train_factors$YEARS_BUILD_MEDI)
+data_train_factors$COMMONAREA_MEDI <- ifelse(is.na(data_train_factors$COMMONAREA_MEDI), 0, data_train_factors$COMMONAREA_MEDI)
+data_train_factors$ELEVATORS_MEDI <- ifelse(is.na(data_train_factors$ELEVATORS_MEDI), 0, data_train_factors$ELEVATORS_MEDI)
+data_train_factors$ENTRANCES_MEDI <- ifelse(is.na(data_train_factors$ENTRANCES_MEDI), 0, data_train_factors$ENTRANCES_MEDI)
+data_train_factors$FLOORSMAX_MEDI <- ifelse(is.na(data_train_factors$FLOORSMAX_MEDI), 0, data_train_factors$FLOORSMAX_MEDI)
+data_train_factors$FLOORSMIN_MEDI <- ifelse(is.na(data_train_factors$FLOORSMIN_MEDI), 0, data_train_factors$FLOORSMIN_MEDI)
+data_train_factors$LANDAREA_MEDI <- ifelse(is.na(data_train_factors$LANDAREA_MEDI), 0, data_train_factors$LANDAREA_MEDI)
+data_train_factors$LIVINGAPARTMENTS_MEDI <- ifelse(is.na(data_train_factors$LIVINGAPARTMENTS_MEDI), 0, data_train_factors$LIVINGAPARTMENTS_MEDI)
+data_train_factors$LIVINGAREA_MEDI <- ifelse(is.na(data_train_factors$LIVINGAREA_MEDI), 0, data_train_factors$LIVINGAREA_MEDI)
+data_train_factors$NONLIVINGAPARTMENTS_MEDI <- ifelse(is.na(data_train_factors$NONLIVINGAPARTMENTS_MEDI), 0, data_train_factors$NONLIVINGAPARTMENTS_MEDI)
+data_train_factors$NONLIVINGAREA_MEDI <- ifelse(is.na(data_train_factors$NONLIVINGAREA_MEDI), 0, data_train_factors$NONLIVINGAREA_MEDI)
+data_train_factors$TOTALAREA_MODE <- ifelse(is.na(data_train_factors$TOTALAREA_MODE), 0, data_train_factors$TOTALAREA_MODE)
+
+# Double checking NA missing values:
+missing_count_train_factors <- colSums(is.na(data_train_factors))
+columns_with_missing_train_factors <- missing_count_train_factors[missing_count_train_factors > 0]
+print(columns_with_missing_train_factors)
+
+str(data_train_factors)
+
+
+```
+
+
+## Variable Selection Using Coefficient Magnitudes 
+
+```{r var select,echo=FALSE,warning=FALSE}
+
+# List of factor variables
+factor_vars <- sapply(train_input, is.factor)
+
+# Check the levels of factor variables
+for (var_name in names(train_input)[factor_vars]) {
+  levels_count <- length(levels(train_input[[var_name]]))
+  if (levels_count < 2) {
+    cat("Variable", var_name, "has", levels_count, "level(s). It must have at least 2 levels for logistic regression.\n")
+  }
+}
+
+
+```
+
+
+## Visualizations and tables
+
+One of the most important and effective ways to digest and understand the data is to see visualizations or summaries of our data. Below are a few examples of some interesting relationships. 
+
+```{r visualizations,echo=FALSE,warning=FALSE}
+
+#Distribution of target:
+mean(data_train$TARGET)
+
+# Default by Gender
+
+#Calculate the mean of 'TARGET' by 'CODE_GENDER'
+target_by_gender <- aggregate(TARGET ~ CODE_GENDER, data = data_train, FUN = mean)
+
+#Create a bar plot of the mean 'TARGET' by gender
+ggplot(target_by_gender, aes(x = CODE_GENDER, y = TARGET, fill = CODE_GENDER)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Gender", y = "Mean Target", fill = "Gender") +
+  ggtitle("Default Rate by Gender")
+
+# Default Rates by Credit Amount
+
+# Create credit bins
+credit_bins <- c(0, 100000, 200000, 300000, 400000, Inf)
+
+# Create a new data frame with credit bins and calculate default rate as a percentage
+data_train_summary <- data_train %>%
+  mutate(Credit_Range = cut(AMT_CREDIT, breaks = credit_bins, labels = c("0-100k", "100k-200k", "200k-300k", "300k-400k", ">400k"), include.lowest = TRUE)) %>%
+  group_by(Credit_Range) %>%
+  summarise(Default_Rate = mean(TARGET == 1) * 100)  # Calculate as percentage
+
+# Create a bar graph of default percentage by credit range
+ggplot(data_train_summary, aes(x = Credit_Range, y = Default_Rate, fill = Credit_Range)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Credit Range", y = "Default Percentage", fill = "Credit Range") +
+  ggtitle("Default Percentage by Credit Range")
+
+```
+
+## Training and Testing
+
+In order to test how effective a model is, we must divide our data into training sets and testing sets. Training sets enable us build out a model and test in on a known outcome to produce a satisfactory output, and then take that model and run our training data through it to see how effective it is when we don't have the results available to use.
+
+```{r training,echo=FALSE,warning=FALSE}
+
+set.seed(17)
+inTrain <- createDataPartition(y = data_train$TARGET, p = 0.70, list = FALSE)
+train_target <- data_train[inTrain, "TARGET"]
+test_target <- data_train[-inTrain, "TARGET"]
+train_input <- data_train[inTrain, -121]
+test_input <- data_train[-inTrain, -121]
+
+# See more detail about estimated beta coefficients
+summary(train_target)
+summary(test_target)
+summary(train_input)
+summary(test_input)
+
+```
+
+## Building the model
+
+```{r model,c}
+
+# Variable Selection
+selected_vars <- c(
+  "CODE_GENDER",
+  "FLAG_OWN_CAR",
+  "FLAG_OWN_REALTY",
+  "AMT_CREDIT",
+  "NAME_EDUCATION_TYPE",
+  "NAME_HOUSING_TYPE"
+)
+
+
+# logistic model
+selected_data <- data_train_factors[c("TARGET", selected_vars)]
+
+logistic_model <- glm(TARGET ~ ., data = selected_data, family = binomial)
+
+# Evaluate the model
+summary(logistic_model)
+
+
+# Create a new data frame with the selected variables and the target variable for the test set
+test_data <- data_train_factors[-inTrain, c("TARGET", selected_vars)]
+
+# Predict using the logistic model on the test set
+test_predictions <- predict(logistic_model, newdata = test_data, type = "response")
+
+# Evaluate the model on the test set (e.g., using ROC, AUC, accuracy)
+library(pROC)  # For ROC curve and AUC
+roc_obj <- roc(test_data$TARGET, test_predictions)
+auc_value <- auc(roc_obj)
+
+# Calculate accuracy
+test_predictions_binary <- ifelse(test_predictions > 0.5, 1, 0)
+accuracy <- mean(test_predictions_binary == test_data$TARGET)
+
+# Print results
+cat("AUC:", auc_value, "\n")
+cat("Accuracy:", accuracy, "\n")
+
+# Extract Test Data
+zip_file_test_submission <- "application_test.csv.zip"
+unzip(zip_file_test_submission, exdir = "extracted_files")
+data_test_submission <- read.csv("extracted_files/application_test.csv")
+
+# Load necessary libraries
+library(pROC)  # For ROC curve and AUC
+
+# Define your logistic regression model
+# Assuming you have already trained the model on the training data
+
+# Select the same variables as used in the training dataset
+selected_vars <- c(
+  "CODE_GENDER",
+  "FLAG_OWN_CAR",
+  "FLAG_OWN_REALTY",
+  "AMT_CREDIT",
+  "NAME_EDUCATION_TYPE",
+  "NAME_HOUSING_TYPE"
+)
+
+test_data_submission <- data_test_submission[selected_vars]
+
+# Do the same transformations to the test dataset
+
+data_test_factors <- data_test_submission%>%
+  mutate(
+    NAME_CONTRACT_TYPE = factor(NAME_CONTRACT_TYPE),
+    CODE_GENDER = factor(CODE_GENDER),
+    FLAG_OWN_CAR = factor(FLAG_OWN_CAR),
+    FLAG_OWN_REALTY = factor(FLAG_OWN_REALTY),
+    NAME_TYPE_SUITE = factor(NAME_TYPE_SUITE),
+    NAME_INCOME_TYPE = factor(NAME_INCOME_TYPE),
+    NAME_EDUCATION_TYPE = factor(NAME_EDUCATION_TYPE),
+    NAME_FAMILY_STATUS = factor(NAME_FAMILY_STATUS),
+    NAME_HOUSING_TYPE = factor(NAME_HOUSING_TYPE),
+    FLAG_MOBIL = factor(FLAG_MOBIL),
+    FLAG_EMP_PHONE = factor(FLAG_EMP_PHONE),
+    FLAG_WORK_PHONE = factor(FLAG_WORK_PHONE),
+    FLAG_CONT_MOBILE = factor(FLAG_CONT_MOBILE),
+    FLAG_PHONE = factor(FLAG_PHONE),
+    FLAG_EMAIL = factor(FLAG_EMAIL),
+    OCCUPATION_TYPE = factor(OCCUPATION_TYPE),
+    CNT_FAM_MEMBERS = factor(CNT_FAM_MEMBERS),
+    REGION_RATING_CLIENT = factor(REGION_RATING_CLIENT),
+    WEEKDAY_APPR_PROCESS_START = factor(WEEKDAY_APPR_PROCESS_START),
+    REG_REGION_NOT_LIVE_REGION = factor(REG_REGION_NOT_LIVE_REGION),
+    REG_REGION_NOT_WORK_REGION = factor(REG_REGION_NOT_WORK_REGION),
+    LIVE_REGION_NOT_WORK_REGION = factor(LIVE_REGION_NOT_WORK_REGION),
+    REG_CITY_NOT_LIVE_CITY = factor(REG_CITY_NOT_LIVE_CITY),
+    REG_CITY_NOT_WORK_CITY = factor(REG_CITY_NOT_WORK_CITY),
+    LIVE_CITY_NOT_WORK_CITY = factor(LIVE_CITY_NOT_WORK_CITY),
+    ORGANIZATION_TYPE = factor(ORGANIZATION_TYPE)
+  )
+
+# Now to replace the variables that had less than 100,000 observations of NA's. Those with greater NA's appear to be NA on purpose. 
+
+data_test_factors <- data_test_submission %>%
+  mutate(
+    AMT_ANNUITY = ifelse(is.na(AMT_ANNUITY), median(AMT_ANNUITY, na.rm = TRUE), AMT_ANNUITY),
+    AMT_GOODS_PRICE = ifelse(is.na(AMT_GOODS_PRICE), median(AMT_GOODS_PRICE, na.rm = TRUE), AMT_GOODS_PRICE),
+    EXT_SOURCE_2 = ifelse(is.na(EXT_SOURCE_2), median(EXT_SOURCE_2, na.rm = TRUE), EXT_SOURCE_2),
+    OBS_30_CNT_SOCIAL_CIRCLE = ifelse(is.na(OBS_30_CNT_SOCIAL_CIRCLE), median(OBS_30_CNT_SOCIAL_CIRCLE, na.rm = TRUE), OBS_30_CNT_SOCIAL_CIRCLE),
+    DEF_30_CNT_SOCIAL_CIRCLE = ifelse(is.na(DEF_30_CNT_SOCIAL_CIRCLE), median(DEF_30_CNT_SOCIAL_CIRCLE, na.rm = TRUE), DEF_30_CNT_SOCIAL_CIRCLE),
+    OBS_60_CNT_SOCIAL_CIRCLE = ifelse(is.na(OBS_60_CNT_SOCIAL_CIRCLE), median(OBS_60_CNT_SOCIAL_CIRCLE, na.rm = TRUE), OBS_60_CNT_SOCIAL_CIRCLE),
+    DEF_60_CNT_SOCIAL_CIRCLE = ifelse(is.na(DEF_60_CNT_SOCIAL_CIRCLE), median(DEF_60_CNT_SOCIAL_CIRCLE, na.rm = TRUE), DEF_60_CNT_SOCIAL_CIRCLE),
+    CNT_FAM_MEMBERS = ifelse(is.na(CNT_FAM_MEMBERS), median(as.numeric(CNT_FAM_MEMBERS), na.rm = TRUE), CNT_FAM_MEMBERS),
+    AMT_REQ_CREDIT_BUREAU_HOUR = ifelse(is.na(AMT_REQ_CREDIT_BUREAU_HOUR), median(AMT_REQ_CREDIT_BUREAU_HOUR, na.rm = TRUE), AMT_REQ_CREDIT_BUREAU_HOUR),
+    AMT_REQ_CREDIT_BUREAU_DAY = ifelse(is.na(AMT_REQ_CREDIT_BUREAU_DAY), median(AMT_REQ_CREDIT_BUREAU_DAY, na.rm = TRUE), AMT_REQ_CREDIT_BUREAU_DAY),
+    AMT_REQ_CREDIT_BUREAU_WEEK = ifelse(is.na(AMT_REQ_CREDIT_BUREAU_WEEK), median(AMT_REQ_CREDIT_BUREAU_WEEK, na.rm = TRUE), AMT_REQ_CREDIT_BUREAU_WEEK),
+    AMT_REQ_CREDIT_BUREAU_MON = ifelse(is.na(AMT_REQ_CREDIT_BUREAU_MON), median(AMT_REQ_CREDIT_BUREAU_MON, na.rm = TRUE), AMT_REQ_CREDIT_BUREAU_MON),
+    AMT_REQ_CREDIT_BUREAU_QRT = ifelse(is.na(AMT_REQ_CREDIT_BUREAU_QRT), median(AMT_REQ_CREDIT_BUREAU_QRT, na.rm = TRUE), AMT_REQ_CREDIT_BUREAU_QRT),
+    AMT_REQ_CREDIT_BUREAU_YEAR = ifelse(is.na(AMT_REQ_CREDIT_BUREAU_YEAR), median(AMT_REQ_CREDIT_BUREAU_YEAR, na.rm = TRUE), AMT_REQ_CREDIT_BUREAU_YEAR),
+    DAYS_LAST_PHONE_CHANGE = ifelse(is.na(DAYS_LAST_PHONE_CHANGE), median(DAYS_LAST_PHONE_CHANGE, na.rm = TRUE), DAYS_LAST_PHONE_CHANGE)
+  )
+
+# For the variables with NA's greater than 100,000 NA's have been replaced with 0
+
+# Replace NA values with 0 for multiple variables
+data_test_factors$OWN_CAR_AGE <- ifelse(is.na(data_test_factors$OWN_CAR_AGE), 0, data_test_factors$OWN_CAR_AGE)
+data_test_factors$EXT_SOURCE_1 <- ifelse(is.na(data_test_factors$EXT_SOURCE_1), 0, data_test_factors$EXT_SOURCE_1)
+data_test_factors$EXT_SOURCE_3 <- ifelse(is.na(data_test_factors$EXT_SOURCE_3), 0, data_test_factors$EXT_SOURCE_3)
+data_test_factors$APARTMENTS_AVG <- ifelse(is.na(data_test_factors$APARTMENTS_AVG), 0, data_test_factors$APARTMENTS_AVG)
+data_test_factors$BASEMENTAREA_AVG <- ifelse(is.na(data_test_factors$BASEMENTAREA_AVG), 0, data_test_factors$BASEMENTAREA_AVG)
+data_test_factors$YEARS_BEGINEXPLUATATION_AVG <- ifelse(is.na(data_test_factors$YEARS_BEGINEXPLUATATION_AVG), 0, data_test_factors$YEARS_BEGINEXPLUATATION_AVG)
+data_test_factors$YEARS_BUILD_AVG <- ifelse(is.na(data_test_factors$YEARS_BUILD_AVG), 0, data_test_factors$YEARS_BUILD_AVG)
+data_test_factors$COMMONAREA_AVG <- ifelse(is.na(data_test_factors$COMMONAREA_AVG), 0, data_test_factors$COMMONAREA_AVG)
+data_test_factors$ELEVATORS_AVG <- ifelse(is.na(data_test_factors$ELEVATORS_AVG), 0, data_test_factors$ELEVATORS_AVG)
+data_test_factors$ENTRANCES_AVG <- ifelse(is.na(data_test_factors$ENTRANCES_AVG), 0, data_test_factors$ENTRANCES_AVG)
+data_test_factors$FLOORSMAX_AVG <- ifelse(is.na(data_test_factors$FLOORSMAX_AVG), 0, data_test_factors$FLOORSMAX_AVG)
+data_test_factors$FLOORSMIN_AVG <- ifelse(is.na(data_test_factors$FLOORSMIN_AVG), 0, data_test_factors$FLOORSMIN_AVG)
+data_test_factors$LANDAREA_AVG <- ifelse(is.na(data_test_factors$LANDAREA_AVG), 0, data_test_factors$LANDAREA_AVG)
+data_test_factors$LIVINGAPARTMENTS_AVG <- ifelse(is.na(data_test_factors$LIVINGAPARTMENTS_AVG), 0, data_test_factors$LIVINGAPARTMENTS_AVG)
+data_test_factors$LIVINGAREA_AVG <- ifelse(is.na(data_test_factors$LIVINGAREA_AVG), 0, data_test_factors$LIVINGAREA_AVG)
+data_test_factors$NONLIVINGAPARTMENTS_AVG <- ifelse(is.na(data_test_factors$NONLIVINGAPARTMENTS_AVG), 0, data_test_factors$NONLIVINGAPARTMENTS_AVG)
+data_test_factors$NONLIVINGAREA_AVG <- ifelse(is.na(data_test_factors$NONLIVINGAREA_AVG), 0, data_test_factors$NONLIVINGAREA_AVG)
+data_test_factors$APARTMENTS_MODE <- ifelse(is.na(data_test_factors$APARTMENTS_MODE), 0, data_test_factors$APARTMENTS_MODE)
+data_test_factors$BASEMENTAREA_MODE <- ifelse(is.na(data_test_factors$BASEMENTAREA_MODE), 0, data_test_factors$BASEMENTAREA_MODE)
+data_test_factors$YEARS_BEGINEXPLUATATION_MODE <- ifelse(is.na(data_test_factors$YEARS_BEGINEXPLUATATION_MODE), 0, data_test_factors$YEARS_BEGINEXPLUATATION_MODE)
+data_test_factors$YEARS_BUILD_MODE <- ifelse(is.na(data_test_factors$YEARS_BUILD_MODE), 0, data_test_factors$YEARS_BUILD_MODE)
+data_test_factors$COMMONAREA_MODE <- ifelse(is.na(data_test_factors$COMMONAREA_MODE), 0, data_test_factors$COMMONAREA_MODE)
+data_test_factors$ELEVATORS_MODE <- ifelse(is.na(data_test_factors$ELEVATORS_MODE), 0, data_test_factors$ELEVATORS_MODE)
+data_test_factors$ENTRANCES_MODE <- ifelse(is.na(data_test_factors$ENTRANCES_MODE), 0, data_test_factors$ENTRANCES_MODE)
+data_test_factors$FLOORSMAX_MODE <- ifelse(is.na(data_test_factors$FLOORSMAX_MODE), 0, data_test_factors$FLOORSMAX_MODE)
+data_test_factors$FLOORSMIN_MODE <- ifelse(is.na(data_test_factors$FLOORSMIN_MODE), 0, data_test_factors$FLOORSMIN_MODE)
+data_test_factors$LANDAREA_MODE <- ifelse(is.na(data_test_factors$LANDAREA_MODE), 0, data_test_factors$LANDAREA_MODE)
+data_test_factors$LIVINGAPARTMENTS_MODE <- ifelse(is.na(data_test_factors$LIVINGAPARTMENTS_MODE), 0, data_test_factors$LIVINGAPARTMENTS_MODE)
+data_test_factors$LIVINGAREA_MODE <- ifelse(is.na(data_test_factors$LIVINGAREA_MODE), 0, data_test_factors$LIVINGAREA_MODE)
+data_test_factors$NONLIVINGAPARTMENTS_MODE <- ifelse(is.na(data_test_factors$NONLIVINGAPARTMENTS_MODE), 0, data_test_factors$NONLIVINGAPARTMENTS_MODE)
+data_test_factors$NONLIVINGAREA_MODE <- ifelse(is.na(data_test_factors$NONLIVINGAREA_MODE), 0, data_test_factors$NONLIVINGAREA_MODE)
+data_test_factors$APARTMENTS_MEDI <- ifelse(is.na(data_test_factors$APARTMENTS_MEDI), 0, data_test_factors$APARTMENTS_MEDI)
+data_test_factors$BASEMENTAREA_MEDI <- ifelse(is.na(data_test_factors$BASEMENTAREA_MEDI), 0, data_test_factors$BASEMENTAREA_MEDI)
+data_test_factors$YEARS_BEGINEXPLUATATION_MEDI <- ifelse(is.na(data_test_factors$YEARS_BEGINEXPLUATATION_MEDI), 0, data_test_factors$YEARS_BEGINEXPLUATATION_MEDI)
+data_test_factors$YEARS_BUILD_MEDI <- ifelse(is.na(data_test_factors$YEARS_BUILD_MEDI), 0, data_test_factors$YEARS_BUILD_MEDI)
+data_test_factors$COMMONAREA_MEDI <- ifelse(is.na(data_test_factors$COMMONAREA_MEDI), 0, data_test_factors$COMMONAREA_MEDI)
+data_test_factors$ELEVATORS_MEDI <- ifelse(is.na(data_test_factors$ELEVATORS_MEDI), 0, data_test_factors$ELEVATORS_MEDI)
+data_test_factors$ENTRANCES_MEDI <- ifelse(is.na(data_test_factors$ENTRANCES_MEDI), 0, data_test_factors$ENTRANCES_MEDI)
+data_test_factors$FLOORSMAX_MEDI <- ifelse(is.na(data_test_factors$FLOORSMAX_MEDI), 0, data_test_factors$FLOORSMAX_MEDI)
+data_test_factors$FLOORSMIN_MEDI <- ifelse(is.na(data_test_factors$FLOORSMIN_MEDI), 0, data_test_factors$FLOORSMIN_MEDI)
+data_test_factors$LANDAREA_MEDI <- ifelse(is.na(data_test_factors$LANDAREA_MEDI), 0, data_test_factors$LANDAREA_MEDI)
+data_test_factors$LIVINGAPARTMENTS_MEDI <- ifelse(is.na(data_test_factors$LIVINGAPARTMENTS_MEDI), 0, data_test_factors$LIVINGAPARTMENTS_MEDI)
+data_test_factors$LIVINGAREA_MEDI <- ifelse(is.na(data_test_factors$LIVINGAREA_MEDI), 0, data_test_factors$LIVINGAREA_MEDI)
+data_test_factors$NONLIVINGAPARTMENTS_MEDI <- ifelse(is.na(data_test_factors$NONLIVINGAPARTMENTS_MEDI), 0, data_test_factors$NONLIVINGAPARTMENTS_MEDI)
+data_test_factors$NONLIVINGAREA_MEDI <- ifelse(is.na(data_test_factors$NONLIVINGAREA_MEDI), 0, data_test_factors$NONLIVINGAREA_MEDI)
+data_test_factors$TOTALAREA_MODE <- ifelse(is.na(data_test_factors$TOTALAREA_MODE), 0, data_test_factors$TOTALAREA_MODE)
+
+
+
+# Predict the probabilities of the positive class (TARGET = 1) on the test dataset
+test_predictions_submission <- predict(logistic_model, newdata = test_data_submission, type = "response")
+
+# Calculate accuracy
+test_predictions_binary_submission <- ifelse(test_predictions_submission > 0.5, 1, 0)
+accuracy_submission <- mean(test_predictions_binary_submission == data_test_submission$TARGET)
+
+
+```
+
+
+```{r save results, echo=FALSE,warning=FALSE}
+
+# Create a data frame with the predictions and the original data
+results <- data.frame(
+  SK_ID_CURR = data_test_submission$SK_ID_CURR,
+  Prediction = test_predictions_submission
+)
+
+# Save the results as a CSV file
+write.csv(results, file = "results.csv", row.names = FALSE)
+
+
+```
